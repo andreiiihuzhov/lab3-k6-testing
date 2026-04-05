@@ -2,73 +2,86 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Rate } from 'k6/metrics';
 
-// Custom metric: рахуємо лише справжні помилки (не 404)
-const errorRate = new Rate('real_errors');
+// Custom metric: рахуємо лише справжні помилки (не 403 — вони очікувані)
+const realErrors = new Rate('real_errors');
 
 // ── Stress Test ───────────────────────────────────────
-// Поступово підвищує навантаження до 30 VU, щоб знайти
-// межу стабільної роботи API. Перевіряє поведінку системи
-// під екстремальним навантаженням.
+// Стрес-навантаження до 30 VU. Змішаний сценарій:
+// частина VU — звичайні USER, частина — ADMIN.
+// Перевіряє поведінку під екстремальним навантаженням.
 
 export const options = {
   stages: [
     { duration: '10s', target: 10 },   // нормальне навантаження
-    { duration: '10s', target: 20 },   // підвищене навантаження
-    { duration: '20s', target: 30 },   // стрес-навантаження
+    { duration: '10s', target: 20 },   // підвищене
+    { duration: '20s', target: 30 },   // стрес
     { duration: '10s', target: 0  },   // відновлення
   ],
   thresholds: {
-    http_req_duration: ['p(95)<1500'],  // 95% запитів < 1.5s
+    http_req_duration: ['p(95)<2000'],  // 95% запитів < 2s при стресі
     real_errors:       ['rate<0.05'],   // менше 5% справжніх помилок
   },
 };
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
+const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
+
+function login(username, password) {
+  const jar = http.cookieJar();
+  const loginPage = http.get(`${BASE_URL}/login`, { jar });
+
+  const csrfMatch = loginPage.body.match(/name="_csrf"\s+value="([^"]+)"/);
+  const csrf = csrfMatch ? csrfMatch[1] : '';
+
+  const res = http.post(
+    `${BASE_URL}/login`,
+    { username, password, _csrf: csrf },
+    { jar, redirects: 5 }
+  );
+
+  return { jar, ok: res.status === 200 };
+}
 
 export default function () {
-  // Сценарій: інтенсивні змішані запити до API
+  // Непарні VU — USER, парні — ADMIN
+  const isAdmin = __VU % 2 === 0;
+  const creds = isAdmin
+    ? { username: 'admin', password: 'admin' }
+    : { username: 'user',  password: 'pass'  };
 
-  // 1. Health check (легкий запит)
-  const healthRes = http.get(`${BASE_URL}/api/health`);
-  check(healthRes, {
-    'health endpoint responds': (r) => r.status === 200,
+  const { jar, ok } = login(creds.username, creds.password);
+
+  // Реєструємо помилку, якщо логін не вдався
+  realErrors.add(!ok);
+
+  if (!ok) { sleep(0.3); return; }
+
+  // Всі — переглядають магазини
+  const shopsRes = http.get(`${BASE_URL}/shops`, { jar });
+  check(shopsRes, {
+    'shops page responds': (r) => r.status === 200,
   });
+  realErrors.add(shopsRes.status !== 200);
 
-  // 2. POST — створити користувача
-  const payload = JSON.stringify({
-    username: `stress_${__VU}_${__ITER}`,
-    email:    `stress_${__VU}_${__ITER}@test.com`,
-  });
-
-  const createRes = http.post(`${BASE_URL}/api/users`, payload, {
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  check(createRes, {
-    'create returns 201': (r) => r.status === 201,
-  });
-
-  // 3. GET — отримати конкретного користувача
-  if (createRes.status === 201) {
-    const userId = createRes.json().id;
-    const getRes = http.get(`${BASE_URL}/api/users/${userId}`);
-    check(getRes, {
-      'get user returns 200':      (r) => r.status === 200,
-      'get user correct username': (r) => r.json().username === `stress_${__VU}_${__ITER}`,
+  if (isAdmin) {
+    // ADMIN: перевіряємо доступ до адмін-функції
+    // (видалення неіснуючого ID — Spring поверне redirect або помилку, але не 403)
+    const adminRes = http.get(`${BASE_URL}/admin/products/delete/999999`, {
+      jar,
+      redirects: 5,
+    });
+    check(adminRes, {
+      'admin action not 403': (r) => r.status !== 403,
+    });
+  } else {
+    // USER: спроба адмін-дії — має отримати 403
+    const forbidRes = http.get(`${BASE_URL}/admin/shops/delete/1`, {
+      jar,
+      redirects: 0,
+    });
+    check(forbidRes, {
+      'user blocked from admin': (r) => r.status === 403 || r.status === 302,
     });
   }
-
-  // 4. GET — отримати неіснуючого користувача (перевірка 404)
-  const notFoundRes = http.get(`${BASE_URL}/api/users/999999`);
-  check(notFoundRes, {
-    '404 for missing user': (r) => r.status === 404,
-  });
-
-  // Рахуємо реальні помилки (не 404 і не 2xx)
-  errorRate.add(
-    healthRes.status !== 200 ||
-    (createRes.status !== 201 && createRes.status !== 200)
-  );
 
   sleep(0.3);
 }

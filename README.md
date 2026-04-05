@@ -1,45 +1,46 @@
 # Lab 3 — Тестування програмних рішень
 
 Лабораторна робота 3 з дисципліни «Інженерія програмного забезпечення».  
-Демонстрація навантажувального тестування REST API за допомогою [Grafana k6](https://k6.io/).
+Навантажувальне тестування RESTful веб-застосунку «Оргтехніка» (Java Spring Boot) за допомогою [Grafana k6](https://k6.io/).
 
-## Опис проєкту
+> Проєкт, що тестується: [andreiiihuzhov/rgr-orgtechnics](https://github.com/andreiiihuzhov/rgr-orgtechnics)
 
-Простий REST API на Express.js для управління користувачами (CRUD), який тестується трьома видами k6-тестів:
+## Опис тестів
 
-| # | Тест | Файл | Опис |
-|---|------|------|------|
-| 1 | Smoke Test | `k6-tests/smoke-test.js` | Мінімальне навантаження (1 VU, 30s) — перевірка базової працездатності |
-| 2 | Load Test | `k6-tests/load-test.js` | Типове навантаження (до 10 VU, 60s) — CRUD-сценарій |
-| 3 | Stress Test | `k6-tests/stress-test.js` | Стрес-навантаження (до 30 VU, 50s) — пошук межі стабільності |
+Тестується Spring Boot застосунок з авторизацією (ролі USER та ADMIN).  
+k6 логінується через Spring Security form-login, отримує сесійну cookie і виконує запити від імені конкретної ролі.
 
-## API Endpoints
+| # | Тест | Файл | Сценарій |
+|---|------|------|----------|
+| 1 | **Smoke Test** | `k6-tests/smoke-test.js` | 1 VU, 30s — базова доступність: логін, перегляд магазинів, перевірка блокування USER від /admin |
+| 2 | **Load Test** | `k6-tests/load-test.js` | до 10 VU, 60s — типове навантаження: кілька USER одночасно переглядають сторінки |
+| 3 | **Stress Test** | `k6-tests/stress-test.js` | до 30 VU, 50s — змішані ролі (USER + ADMIN), перевірка поведінки під стресом |
 
-| Метод | URL | Опис |
-|-------|-----|------|
-| GET | `/api/health` | Перевірка стану сервера |
-| GET | `/api/users` | Отримати всіх користувачів |
-| GET | `/api/users/:id` | Отримати користувача за ID |
-| POST | `/api/users` | Створити нового користувача |
-| DELETE | `/api/users/:id` | Видалити користувача |
+## Ендпоінти, що тестуються
+
+| Метод | URL | Роль | Опис |
+|-------|-----|------|------|
+| GET | `/login` | Всі | Сторінка входу |
+| POST | `/login` | Всі | Авторизація через форму |
+| GET | `/shops` | USER, ADMIN | Список магазинів і товарів |
+| GET | `/admin/products/delete/{id}` | ADMIN | Видалення товару |
+| GET | `/admin/shops/delete/{id}` | ADMIN | Видалення магазину |
 
 ## Технології
 
-![Node.js](https://img.shields.io/badge/Node.js-20-green)
-![Express](https://img.shields.io/badge/Express-4.21-blue)
 ![k6](https://img.shields.io/badge/k6-Grafana-purple)
-![Docker](https://img.shields.io/badge/Docker-latest-blue)
+![Java](https://img.shields.io/badge/Java-17-orange)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3-green)
+![MySQL](https://img.shields.io/badge/MySQL-8-blue)
 
-## Запуск локально
+## Локальний запуск тестів
 
 ```bash
-# Встановити залежності
-npm install
+# Переконайся, що РГР-застосунок запущений на http://localhost:8080
+# (MySQL повинна бути запущена з базою rgr_orgtechnics)
 
-# Запустити сервер
-node server.js
+# Встановити k6: https://k6.io/docs/get-started/installation/
 
-# Запустити тести (в іншому терміналі)
 k6 run k6-tests/smoke-test.js
 k6 run k6-tests/load-test.js
 k6 run k6-tests/stress-test.js
@@ -47,7 +48,11 @@ k6 run k6-tests/stress-test.js
 
 ## CI/CD
 
-Тести автоматично запускаються при кожному push у гілку `main` через GitHub Actions.
+При кожному push у `main` GitHub Actions автоматично:
+1. Піднімає MySQL у Docker service
+2. Клонує та збирає РГР-застосунок
+3. Запускає Spring Boot додаток
+4. Встановлює k6 та прогоняє всі 3 тести
 
 ## Автор
 
