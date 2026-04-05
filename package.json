@@ -1,0 +1,13 @@
+{
+  "name": "lab3-k6-testing",
+  "version": "1.0.0",
+  "description": "Demo backend API for k6 load testing (Lab 3 - Software Engineering)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Use k6 for load testing\""
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
